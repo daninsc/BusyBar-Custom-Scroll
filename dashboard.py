@@ -29,6 +29,8 @@ import io
 import json
 import math
 import os
+import socket
+import struct
 import time
 import datetime
 import threading
@@ -532,10 +534,46 @@ class DataStore:
         self.moon = compute_moon_phase()
         self.tides = []
         self.teams = {}  # slug+league -> status dict
+        self.ntp_offset = 0.0  # seconds to add to local time.time() to get network time
         self.lock = threading.Lock()
 
 
 store = DataStore()
+
+NTP_SERVER = "time.apple.com"  # Mac-friendly default; pool.ntp.org also works
+NTP_PORT = 123
+NTP_DELTA = 2208988800  # seconds between NTP epoch (1900) and Unix epoch (1970)
+NTP_REFRESH_SEC = 60 * 60  # resync hourly
+
+
+def fetch_ntp_offset():
+    """Query a public NTP server and return (network_time - local_time) in
+    seconds, so the clock displays real network time instead of trusting
+    whatever the system clock happens to say."""
+    try:
+        packet = b"\x1b" + 47 * b"\0"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(5)
+            local_send_time = time.time()
+            s.sendto(packet, (NTP_SERVER, NTP_PORT))
+            data, _ = s.recvfrom(48)
+        unpacked = struct.unpack("!12I", data)
+        ntp_timestamp = unpacked[10] + float(unpacked[11]) / 2**32
+        network_time = ntp_timestamp - NTP_DELTA
+        local_now = time.time()
+        # rough round-trip correction: assume half the request time has passed
+        round_trip = local_now - local_send_time
+        return (network_time + round_trip / 2) - local_now
+    except Exception as e:
+        print(f"[fetch_ntp_offset] failed: {e}")
+        return None
+
+
+def network_now():
+    """Current time adjusted by the last known NTP offset."""
+    with store.lock:
+        offset = store.ntp_offset
+    return datetime.datetime.fromtimestamp(time.time() + offset)
 
 
 def refresh_loop():
@@ -543,12 +581,21 @@ def refresh_loop():
     last_tide = 0
     last_moon = 0
     last_sports = 0
+    last_ntp = 0
     last_calendar_day = datetime.datetime.now().day  # set in setup_icons() at startup
 
     while True:
         now = time.time()
 
-        today = datetime.datetime.now().day
+        if now - last_ntp > NTP_REFRESH_SEC:
+            offset = fetch_ntp_offset()
+            if offset is not None:
+                with store.lock:
+                    store.ntp_offset = offset
+                print(f"[ntp] synced, offset {offset:+.3f}s from system clock")
+            last_ntp = now
+
+        today = network_now().day
         if today != last_calendar_day:
             generate_calendar_icon(today)  # same filename ("calendar.png"),
             last_calendar_day = today      # so no need to update any dict
@@ -630,7 +677,7 @@ def show_clock_segment(other_icon_files):
     """Same layout as tides: icon, small title (date) on top, small content
     (time) below -- both rows use 'small' font so the bottom row isn't cut
     off, matching what actually fits in the 16px height."""
-    now = datetime.datetime.now()
+    now = network_now()  # NTP-corrected, not just the system clock
     date_text = now.strftime("%m-%d-%Y")
     time_text = now.strftime("%I:%M %p").lstrip("0")
     icon_path = other_icon_files.get("clock")
@@ -743,7 +790,11 @@ def main():
     weather_icon_files, moon_icon_files, other_icon_files, team_logo_files = setup_icons()
 
     print("Doing initial data fetch...")
+    ntp_offset = fetch_ntp_offset()
     with store.lock:
+        if ntp_offset is not None:
+            store.ntp_offset = ntp_offset
+            print(f"[ntp] initial sync, offset {ntp_offset:+.3f}s from system clock")
         store.weather = fetch_weather()
         store.tides = fetch_tides()
         store.moon = compute_moon_phase()
