@@ -245,8 +245,41 @@ MOON_ICONS = {
 }
 
 OTHER_ICONS = {
-    "tide": "u1f30a",  # wave emoji
+    "tide": "u1f30a",   # wave emoji
 }
+
+
+def generate_calendar_icon(day):
+    """Draw a 16x16 calendar-page icon with today's day-of-month number on
+    it (e.g. a small red header band + the number below), instead of a
+    generic calendar graphic. Regenerated once a day."""
+    from PIL import ImageDraw, ImageFont
+
+    img = Image.new("RGBA", (16, 16), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    # Red header band (top of the "calendar page")
+    draw.rectangle([0, 0, 15, 3], fill=(217, 51, 63, 255))
+    # Body outline
+    draw.rectangle([0, 4, 15, 15], outline=(120, 120, 120, 255))
+
+    text = str(day)
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 9)
+    except Exception:
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = (16 - text_w) // 2 - bbox[0]
+    y = 4 + (12 - text_h) // 2 - bbox[1]
+    draw.text((x, y), text, fill=(30, 30, 30, 255), font=font)
+
+    local_path = os.path.join(ICON_DIR, "calendar.png")
+    img.save(local_path)
+    with open(local_path, "rb") as f:
+        busy_upload("calendar.png", f.read())
+    return "calendar.png"
 
 
 def prepare_icon(local_name, source_url):
@@ -303,6 +336,7 @@ def setup_icons():
     other_icon_files = {}
     for key, code in OTHER_ICONS.items():
         other_icon_files[key] = prepare_icon(key, f"{NOTO_BASE}/emoji_{code}.png")
+    other_icon_files["clock"] = generate_calendar_icon(datetime.datetime.now().day)
 
     team_logo_files = {}
     for name, sport, league, slug in TEAMS:
@@ -509,9 +543,15 @@ def refresh_loop():
     last_tide = 0
     last_moon = 0
     last_sports = 0
+    last_calendar_day = datetime.datetime.now().day  # set in setup_icons() at startup
 
     while True:
         now = time.time()
+
+        today = datetime.datetime.now().day
+        if today != last_calendar_day:
+            generate_calendar_icon(today)  # same filename ("calendar.png"),
+            last_calendar_day = today      # so no need to update any dict
 
         if now - last_weather > WEATHER_REFRESH_SEC:
             w = fetch_weather()
@@ -586,16 +626,25 @@ def hold_seconds(text, width=TEXT_WIDTH):
     return max(estimate_loop_seconds(text, width) * LOOPS_BEFORE_REFRESH, 5)
 
 
-def show_clock_segment():
-    """No natural icon for the clock -- full-width single line."""
+def show_clock_segment(other_icon_files):
+    """Same layout as tides: icon, small title (date) on top, small content
+    (time) below -- both rows use 'small' font so the bottom row isn't cut
+    off, matching what actually fits in the 16px height."""
     now = datetime.datetime.now()
-    text = now.strftime("%m-%d-%Y %I:%M %p").lstrip("0")
-    hold = hold_seconds(text, FULL_WIDTH)
+    date_text = now.strftime("%m-%d-%Y")
+    time_text = now.strftime("%I:%M %p").lstrip("0")
+    icon_path = other_icon_files.get("clock")
+    hold = max(hold_seconds(date_text), hold_seconds(time_text))
     busy_clear()
-    elements = [
-        text_el("clock", text, 0, 5, font="normal", color="#90EE90FF",
-                 width=FULL_WIDTH, timeout=math.ceil(hold) + 2),
-    ]
+    elements = []
+    if icon_path:
+        elements.append(image_el("icon", icon_path, ICON_X, 0, timeout=math.ceil(hold) + 2))
+    elements.append(text_el("title", date_text, TEXT_X, 0, font="small",
+                             color="#AAAAAAFF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
+    elements.append(text_el("content", time_text, TEXT_X, 8, font="small",
+                             color="#90EE90FF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
     busy_draw(elements)
     return hold
 
@@ -708,7 +757,7 @@ def main():
     print("Starting segment loop. Ctrl+C to stop.")
     try:
         while True:
-            time.sleep(show_clock_segment())
+            time.sleep(show_clock_segment(other_icon_files))
             time.sleep(show_weather_segment(weather_icon_files))
             time.sleep(show_moon_segment(moon_icon_files))
             time.sleep(show_tide_segment(other_icon_files))
