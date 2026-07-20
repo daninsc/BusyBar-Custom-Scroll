@@ -141,6 +141,22 @@ def busy_upload(filename, image_bytes):
         print(f"[busy_upload] failed for {filename}: {e} {detail}")
 
 
+def busy_clear():
+    """Clear all currently-displayed elements for this app. BUSY Bar only
+    replaces an element when a new one arrives with the SAME id -- elements
+    with different ids just stack up on screen. Segments here use different
+    ids from each other (icon/info vs icon/title/content vs logo/info), so
+    each segment clears the display first rather than relying on id reuse."""
+    url = f"{BASE_URL}/api/display/draw"
+    try:
+        resp = requests.delete(url, params={"application_name": APP_ID}, timeout=5)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        body = getattr(e, "response", None)
+        detail = body.text if body is not None else ""
+        print(f"[busy_clear] failed: {e} {detail}")
+
+
 def busy_draw(elements):
     """Send a draw request with a list of text/image elements."""
     url = f"{BASE_URL}/api/display/draw"
@@ -228,6 +244,10 @@ MOON_ICONS = {
     "waning_crescent": "u1f318",
 }
 
+OTHER_ICONS = {
+    "tide": "u1f30a",  # wave emoji
+}
+
 
 def prepare_icon(local_name, source_url):
     """Download an icon, resize to 16x16, cache locally, upload to BUSY Bar."""
@@ -280,11 +300,15 @@ def setup_icons():
     for key, code in MOON_ICONS.items():
         moon_icon_files[key] = prepare_icon(key, f"{NOTO_BASE}/emoji_{code}.png")
 
+    other_icon_files = {}
+    for key, code in OTHER_ICONS.items():
+        other_icon_files[key] = prepare_icon(key, f"{NOTO_BASE}/emoji_{code}.png")
+
     team_logo_files = {}
     for name, sport, league, slug in TEAMS:
         team_logo_files[slug + league] = prepare_team_logo(name, sport, league, slug)
 
-    return weather_icon_files, moon_icon_files, team_logo_files
+    return weather_icon_files, moon_icon_files, other_icon_files, team_logo_files
 
 
 # ----------------------------------------------------------------------------
@@ -518,19 +542,23 @@ def refresh_loop():
 
 
 # ----------------------------------------------------------------------------
-# TICKER
+# TICKER (per-topic segments)
 # ----------------------------------------------------------------------------
-# One continuous scrolling line -- clock, weather, moon phase, tides, and
-# in-season sports all joined into a single string, refreshed periodically.
-# (No per-segment icons: a single line can't reasonably swap icons in and out
-# as unrelated topics scroll past.)
+# A single text element can't swap icons mid-scroll, so each topic is its own
+# draw call: icon fixed on the left, text scrolling on the right. Instead of
+# a fixed dwell time per topic (the old "flipping" behavior), each segment
+# stays up for LOOPS_BEFORE_REFRESH full scroll cycles of its own text, so
+# motion never stops -- it just changes topic when the current one has
+# scrolled past a few times.
 
-TICKER_SEPARATOR = "     ---     "  # ASCII-only: the API rejects non-ASCII text (e.g. "•")
-TICKER_REFRESH_SEC = 60  # how often the ticker text is rebuilt and re-sent
+LOOPS_BEFORE_REFRESH = 3
+TEXT_WIDTH = 54       # width of the text area to the right of a 16px icon
+FULL_WIDTH = 72        # width when there's no icon (e.g. the clock)
+ICON_X = 0
+TEXT_X = 18
 
 
 def team_status_str(status):
-    """Same status logic as before, factored out for reuse in the ticker."""
     if status["live"]:
         return f"LIVE {status['live_score_str'] or 'In progress'}"
     if status["next"] and (not status["last"] or status["next"]["date"] < datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=SEASON_WINDOW_DAYS)):
@@ -543,58 +571,118 @@ def team_status_str(status):
     return None
 
 
-def build_ticker_text():
-    now = datetime.datetime.now()
-    segments = [now.strftime("%m-%d-%Y %I:%M %p").lstrip("0")]
-
-    with store.lock:
-        w = store.weather
-        m = store.moon
-        tides = list(store.tides)
-        teams_snapshot = dict(store.teams)
-
-    if w:
-        segments.append(f"{CITY_NAME} {w['temp_f']}°F (H:{w['high_f']}° L:{w['low_f']}°)")
-    if m:
-        segments.append(m["label"])
-    for event in tides:
-        segments.append(f"TIDE {event}")
-    for name, sport, league, slug in TEAMS:
-        status = teams_snapshot.get(slug + league)
-        if not status or not status["in_season"]:
-            continue
-        status_str = team_status_str(status)
-        if status_str:
-            segments.append(f"{name}: {status_str}")
-
-    return TICKER_SEPARATOR.join(segments) if segments else "Loading..."
-
-
-LOOPS_BEFORE_REFRESH = 3
-TICKER_WIDTH = 72
-
-
-def estimate_loop_seconds(text):
-    """Estimate how long one full scroll cycle of `text` takes, so the ticker
-    can refresh after LOOPS_BEFORE_REFRESH repeats instead of on a fixed timer."""
+def estimate_loop_seconds(text, width=TEXT_WIDTH):
+    """Estimate how long one full scroll cycle of `text` takes, so a segment
+    can advance after LOOPS_BEFORE_REFRESH repeats instead of a fixed timer."""
     text_px = len(text) * AVG_CHAR_PX
-    overflow_px = max(text_px - TICKER_WIDTH, 0)
+    overflow_px = max(text_px - width, 0)
     scroll_px_per_sec = SCROLL_RATE_PPM / 60
     scroll_seconds = overflow_px / scroll_px_per_sec if scroll_px_per_sec else 0
     pause_seconds = (SCROLL_START_DELAY_MS + SCROLL_REPEAT_DELAY_MS) / 1000
     return scroll_seconds + pause_seconds
 
 
-def show_ticker():
-    """Draw the ticker and return how long to wait before refreshing it
-    (enough time for LOOPS_BEFORE_REFRESH full scroll cycles)."""
-    text = build_ticker_text()
+def hold_seconds(text, width=TEXT_WIDTH):
+    return max(estimate_loop_seconds(text, width) * LOOPS_BEFORE_REFRESH, 5)
+
+
+def show_clock_segment():
+    """No natural icon for the clock -- full-width single line."""
+    now = datetime.datetime.now()
+    text = now.strftime("%m-%d-%Y %I:%M %p").lstrip("0")
+    hold = hold_seconds(text, FULL_WIDTH)
+    busy_clear()
     elements = [
-        text_el("ticker", text, 0, 5, font="normal", color="#FFFFFFFF",
-                 width=TICKER_WIDTH, timeout=0),
+        text_el("clock", text, 0, 5, font="normal", color="#90EE90FF",
+                 width=FULL_WIDTH, timeout=math.ceil(hold) + 2),
     ]
     busy_draw(elements)
-    return estimate_loop_seconds(text) * LOOPS_BEFORE_REFRESH
+    return hold
+
+
+def show_weather_segment(weather_icon_files):
+    with store.lock:
+        w = store.weather
+    if not w:
+        return 5
+    icon_path = weather_icon_files.get(w["icon_key"])
+    text = f"{CITY_NAME} {w['temp_f']}°F (H:{w['high_f']}° L:{w['low_f']}°)"
+    hold = hold_seconds(text)
+    busy_clear()
+    elements = []
+    if icon_path:
+        elements.append(image_el("icon", icon_path, ICON_X, 0, timeout=math.ceil(hold) + 2))
+    elements.append(text_el("info", text, TEXT_X, 5, font="normal",
+                             color="#FFD700FF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
+    busy_draw(elements)
+    return hold
+
+
+def show_moon_segment(moon_icon_files):
+    with store.lock:
+        m = store.moon
+    if not m:
+        return 5
+    icon_path = moon_icon_files.get(m["icon_key"])
+    text = m["label"]
+    hold = hold_seconds(text)
+    busy_clear()
+    elements = []
+    if icon_path:
+        elements.append(image_el("icon", icon_path, ICON_X, 0, timeout=math.ceil(hold) + 2))
+    elements.append(text_el("info", text, TEXT_X, 5, font="normal",
+                             color="#CCCCFFFF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
+    busy_draw(elements)
+    return hold
+
+
+def show_tide_segment(other_icon_files):
+    """Icon, small 'TIDE' title on top, scrolling content line below."""
+    with store.lock:
+        tides = list(store.tides)
+    if not tides:
+        return 5
+    icon_path = other_icon_files.get("tide")
+    content = "   |   ".join(tides)
+    hold = hold_seconds(content)
+    busy_clear()
+    elements = []
+    if icon_path:
+        elements.append(image_el("icon", icon_path, ICON_X, 0, timeout=math.ceil(hold) + 2))
+    elements.append(text_el("title", "TIDE", TEXT_X, 0, font="small",
+                             color="#66CCFFFF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
+    elements.append(text_el("content", content, TEXT_X, 8, font="small",
+                             color="#66CCFFFF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
+    busy_draw(elements)
+    return hold
+
+
+def show_team_segment(name, slug, league, team_logo_files):
+    with store.lock:
+        status = store.teams.get(slug + league)
+    if not status or not status["in_season"]:
+        return None  # signal: skip, not in season
+
+    status_str = team_status_str(status)
+    if not status_str:
+        return None
+
+    logo_path = team_logo_files.get(slug + league)
+    text = f"{name}: {status_str}"
+    hold = hold_seconds(text)
+    busy_clear()
+    elements = []
+    if logo_path:
+        elements.append(image_el("logo", logo_path, ICON_X, 0, timeout=math.ceil(hold) + 2))
+    elements.append(text_el("info", text, TEXT_X, 5, font="normal",
+                             color="#FFCC66FF", width=TEXT_WIDTH,
+                             timeout=math.ceil(hold) + 2))
+    busy_draw(elements)
+    return hold
 
 
 # ----------------------------------------------------------------------------
@@ -602,6 +690,9 @@ def show_ticker():
 # ----------------------------------------------------------------------------
 
 def main():
+    print("Preparing icons (first run may take a minute)...")
+    weather_icon_files, moon_icon_files, other_icon_files, team_logo_files = setup_icons()
+
     print("Doing initial data fetch...")
     with store.lock:
         store.weather = fetch_weather()
@@ -614,11 +705,17 @@ def main():
 
     threading.Thread(target=refresh_loop, daemon=True).start()
 
-    print("Starting ticker loop. Ctrl+C to stop.")
+    print("Starting segment loop. Ctrl+C to stop.")
     try:
         while True:
-            wait_seconds = show_ticker()
-            time.sleep(max(wait_seconds, 5))  # 5s floor in case text is very short
+            time.sleep(show_clock_segment())
+            time.sleep(show_weather_segment(weather_icon_files))
+            time.sleep(show_moon_segment(moon_icon_files))
+            time.sleep(show_tide_segment(other_icon_files))
+            for name, sport, league, slug in TEAMS:
+                wait_seconds = show_team_segment(name, slug, league, team_logo_files)
+                if wait_seconds is not None:
+                    time.sleep(wait_seconds)
     except KeyboardInterrupt:
         print("Stopped.")
 
