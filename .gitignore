@@ -1,0 +1,4 @@
+icons/
+*.log
+__pycache__/
+*.pyc

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dangracie.busybardashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-u</string>
+        <string>/Users/dan/Library/Application Support/Claude/local-agent-mode-sessions/5ec05879-63aa-457b-8ae9-fabbca19c26e/9168c892-e009-4a67-aac3-13244e1f8053/local_6e86d661-c866-491f-9580-a520d6806e86/outputs/2026-07-19-busy-bar-dashboard.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/dan/Library/Application Support/Claude/local-agent-mode-sessions/5ec05879-63aa-457b-8ae9-fabbca19c26e/9168c892-e009-4a67-aac3-13244e1f8053/local_6e86d661-c866-491f-9580-a520d6806e86/outputs</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/dan/Library/Application Support/Claude/local-agent-mode-sessions/5ec05879-63aa-457b-8ae9-fabbca19c26e/9168c892-e009-4a67-aac3-13244e1f8053/local_6e86d661-c866-491f-9580-a520d6806e86/outputs/busy_bar.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dan/Library/Application Support/Claude/local-agent-mode-sessions/5ec05879-63aa-457b-8ae9-fabbca19c26e/9168c892-e009-4a67-aac3-13244e1f8053/local_6e86d661-c866-491f-9580-a520d6806e86/outputs/busy_bar.log</string>
+</dict>
+</plist>

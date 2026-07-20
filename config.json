@@ -1,0 +1,38 @@
+{
+  "city_name": "Charleston",
+  "lat": 32.7765,
+  "lon": -79.9311,
+  "tide_station": "8665530",
+  "teams": [
+    [
+      "Pirates",
+      "baseball",
+      "mlb",
+      "pit"
+    ],
+    [
+      "Steelers",
+      "football",
+      "nfl",
+      "pit"
+    ],
+    [
+      "WVU",
+      "football",
+      "college-football",
+      "wvu"
+    ],
+    [
+      "S Carolina",
+      "football",
+      "college-football",
+      "sc"
+    ],
+    [
+      "Clemson",
+      "football",
+      "college-football",
+      "clemson"
+    ]
+  ]
+}
