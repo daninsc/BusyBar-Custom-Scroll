@@ -54,6 +54,13 @@ DEFAULT_CONFIG = {
     "lat": 32.7765,
     "lon": -79.9311,
     "tide_station": "8665530",  # NOAA Tides & Currents station ID (free, no key)
+    # Dashboard stops drawing during this daily window (24h "HH:MM", wraps
+    # past midnight). BUSY Bar's own physical power switch/state isn't
+    # visible over the HTTP API (confirmed via REST polling and a WebSocket
+    # capture -- see 2026-07-20-test-busybar-ws.py), so this schedule is a
+    # practical stand-in rather than true switch detection.
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "08:00",
     "teams": [
         # [display name, ESPN sport path, ESPN league path, team slug]
         ["Pirates", "baseball", "mlb", "pit"],
@@ -119,6 +126,11 @@ SEASON_WINDOW_DAYS = 10
 # Sports teams: (display name, ESPN sport path, ESPN league path, team slug)
 TEAMS = [tuple(t) for t in CONFIG["teams"]]
 
+# Daily window during which the dashboard stops drawing (see note above
+# DEFAULT_CONFIG). "HH:MM" 24h, wraps past midnight if start > end.
+QUIET_HOURS_START = CONFIG["quiet_hours_start"]
+QUIET_HOURS_END = CONFIG["quiet_hours_end"]
+
 # ----------------------------------------------------------------------------
 # BUSY BAR HTTP API HELPERS
 # ----------------------------------------------------------------------------
@@ -143,6 +155,21 @@ def busy_upload(filename, image_bytes):
         print(f"[busy_upload] failed for {filename}: {e} {detail}")
 
 
+# True while our last draw attempt was rejected because a higher-priority
+# app -- e.g. an active BUSY work-session interval timer, priority 90 vs our
+# 50 -- currently owns the display. BUSY Bar returns 409 "Not drawn due to
+# low priority" in that case rather than silently overriding, so we can
+# detect it and back off instead of fighting it every cycle.
+_priority_blocked = False
+
+
+def _is_low_priority_rejection(exc):
+    resp = getattr(exc, "response", None)
+    if resp is None or resp.status_code != 409:
+        return False
+    return "low priority" in resp.text.lower()
+
+
 def busy_clear():
     """Clear all currently-displayed elements for this app. BUSY Bar only
     replaces an element when a new one arrives with the SAME id -- elements
@@ -154,22 +181,38 @@ def busy_clear():
         resp = requests.delete(url, params={"application_name": APP_ID}, timeout=5)
         resp.raise_for_status()
     except requests.RequestException as e:
+        if _is_low_priority_rejection(e):
+            return  # busy_draw() below reports/tracks this; avoid double-logging
         body = getattr(e, "response", None)
         detail = body.text if body is not None else ""
         print(f"[busy_clear] failed: {e} {detail}")
 
 
 def busy_draw(elements):
-    """Send a draw request with a list of text/image elements."""
+    """Send a draw request with a list of text/image elements. Returns True
+    on success, False if rejected -- most notably a 409 because a
+    higher-priority app (e.g. an active work-session timer) currently owns
+    the display."""
+    global _priority_blocked
     url = f"{BASE_URL}/api/display/draw"
     payload = {"application_name": APP_ID, "priority": 50, "elements": elements}
     try:
         resp = requests.post(url, json=payload, timeout=5)
         resp.raise_for_status()
+        _priority_blocked = False
+        return True
     except requests.RequestException as e:
-        body = getattr(e, "response", None)
-        detail = body.text if body is not None else ""
-        print(f"[busy_draw] failed: {e} {detail}")
+        if _is_low_priority_rejection(e):
+            if not _priority_blocked:
+                print("[busy_draw] a higher-priority app (e.g. an active "
+                      "work-session timer) owns the display -- pausing "
+                      "until it's free")
+            _priority_blocked = True
+        else:
+            body = getattr(e, "response", None)
+            detail = body.text if body is not None else ""
+            print(f"[busy_draw] failed: {e} {detail}")
+        return False
 
 
 # Valid font enum per BUSY Bar's OpenAPI spec: tiny, small, normal, condensed,
@@ -576,6 +619,19 @@ def network_now():
     return datetime.datetime.fromtimestamp(time.time() + offset)
 
 
+def is_quiet_hours(now=None):
+    """True if we're currently inside the configured quiet-hours window.
+    Handles the overnight case (e.g. 22:00-08:00, where start > end)."""
+    now = now or network_now()
+    start_h, start_m = (int(x) for x in QUIET_HOURS_START.split(":"))
+    end_h, end_m = (int(x) for x in QUIET_HOURS_END.split(":"))
+    start = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+    end = now.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
+    if start <= end:
+        return start <= now < end
+    return now >= start or now < end
+
+
 def refresh_loop():
     last_weather = 0
     last_tide = 0
@@ -785,6 +841,14 @@ def show_team_segment(name, slug, league, team_logo_files):
 # MAIN LOOP
 # ----------------------------------------------------------------------------
 
+def run_and_wait(hold):
+    """Sleep for `hold` seconds -- or a short 15s retry interval instead, if
+    the segment's draw was just rejected for low priority, so we check back
+    in soon rather than waiting out a (possibly long) scroll-based hold time
+    for content that isn't actually showing."""
+    time.sleep(15 if _priority_blocked else hold)
+
+
 def main():
     print("Preparing icons (first run may take a minute)...")
     weather_icon_files, moon_icon_files, other_icon_files, team_logo_files = setup_icons()
@@ -806,16 +870,31 @@ def main():
     threading.Thread(target=refresh_loop, daemon=True).start()
 
     print("Starting segment loop. Ctrl+C to stop.")
+    was_quiet = False
     try:
         while True:
-            time.sleep(show_clock_segment(other_icon_files))
-            time.sleep(show_weather_segment(weather_icon_files))
-            time.sleep(show_moon_segment(moon_icon_files))
-            time.sleep(show_tide_segment(other_icon_files))
+            if is_quiet_hours():
+                if not was_quiet:
+                    print(f"[quiet hours] {QUIET_HOURS_START}-{QUIET_HOURS_END}: "
+                          f"pausing display")
+                    busy_clear()
+                    was_quiet = True
+                time.sleep(60)
+                continue
+            if was_quiet:
+                print("[quiet hours] window ended, resuming display")
+                was_quiet = False
+
+            run_and_wait(show_clock_segment(other_icon_files))
+            run_and_wait(show_weather_segment(weather_icon_files))
+            run_and_wait(show_moon_segment(moon_icon_files))
+            run_and_wait(show_tide_segment(other_icon_files))
             for name, sport, league, slug in TEAMS:
                 wait_seconds = show_team_segment(name, slug, league, team_logo_files)
                 if wait_seconds is not None:
-                    time.sleep(wait_seconds)
+                    run_and_wait(wait_seconds)
+                if _priority_blocked:
+                    break
     except KeyboardInterrupt:
         print("Stopped.")
 
