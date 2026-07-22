@@ -827,16 +827,34 @@ ICON_X = 0
 TEXT_X = 18
 
 
-def team_status_str(status):
+# Only show a completed game's score if it happened this recently -- an old
+# score from well outside this window isn't worth a segment (matches the
+# in-season window's spirit, but tighter, since a score is only interesting
+# while it's fresh).
+RECENT_LAST_GAME_DAYS = 7
+
+
+def team_status_kind(status):
+    """Return what should currently be shown for a team:
+    ("live", text) or ("next", text) -- single-line, as before -- or
+    ("last", opponent, score_text) for a completed game within
+    RECENT_LAST_GAME_DAYS, which show_team_segment renders as two lines.
+    None if nothing applies (e.g. last completed game is older than that)."""
     if status["live"]:
-        return f"LIVE {status['live_score_str'] or 'In progress'}"
+        return ("live", f"LIVE {status['live_score_str'] or 'In progress'}")
     if status["next"] and (not status["last"] or status["next"]["date"] < datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=SEASON_WINDOW_DAYS)):
         nxt = status["next"]
         vs = "vs" if nxt["is_home"] else "@"
         when = nxt["date"].astimezone().strftime("%a %m/%d %I:%M%p").lstrip("0")
-        return f"NEXT {vs} {nxt['opponent']} {when}"
+        return ("next", f"NEXT {vs} {nxt['opponent']} {when}")
     if status["last"]:
-        return f"LAST: {status['last']['opponent']} {status['last_score_str'] or ''}"
+        last = status["last"]
+        days_ago = (datetime.datetime.now(datetime.timezone.utc) - last["date"]).days
+        if days_ago <= RECENT_LAST_GAME_DAYS:
+            when = last["date"].astimezone().strftime("%a %m/%d").lstrip("0")
+            score_text = f"{status['last_score_str']} ({when})" if status["last_score_str"] \
+                else f"vs {last['opponent']} ({when})"
+            return ("last", last["opponent"], score_text)
     return None
 
 
@@ -945,12 +963,33 @@ def show_team_segment(name, slug, league, team_logo_files):
     if not status or not status["in_season"]:
         return None  # signal: skip, not in season
 
-    status_str = team_status_str(status)
-    if not status_str:
-        return None
+    kind = team_status_kind(status)
+    if kind is None:
+        return None  # no live/upcoming game, and no completed game recently
 
     logo_path = team_logo_files.get(slug + league)
-    text = f"{name}: {status_str}"
+
+    if kind[0] == "last":
+        # Two-line layout, same pattern as tides/clock: team name on top,
+        # the score on the bottom line.
+        _, _opponent, score_text = kind
+        hold = max(hold_seconds(name), hold_seconds(score_text))
+        busy_clear()
+        elements = []
+        if logo_path:
+            elements.append(image_el("logo", logo_path, ICON_X, 0, timeout=math.ceil(hold) + 2))
+        elements.append(text_el("title", name, TEXT_X, 0, font="small",
+                                 color="#FFCC66FF", width=TEXT_WIDTH,
+                                 timeout=math.ceil(hold) + 2))
+        elements.append(text_el("content", score_text, TEXT_X, 8, font="small",
+                                 color="#FFCC66FF", width=TEXT_WIDTH,
+                                 timeout=math.ceil(hold) + 2))
+        busy_draw(elements)
+        return hold
+
+    # LIVE / NEXT: unchanged single-line layout.
+    _, status_text = kind
+    text = f"{name}: {status_text}"
     hold = hold_seconds(text)
     busy_clear()
     elements = []
