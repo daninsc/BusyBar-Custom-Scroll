@@ -18,7 +18,7 @@ tweak font sizes / x,y offsets / colors once you see it on the real
 
 DEPENDENCIES
 ------------
-pip install requests pillow --break-system-packages
+pip install requests pillow websocket-client --break-system-packages
 
 RUN
 ---
@@ -578,6 +578,7 @@ class DataStore:
         self.tides = []
         self.teams = {}  # slug+league -> status dict
         self.ntp_offset = 0.0  # seconds to add to local time.time() to get network time
+        self.switch_off = False  # physical switch is in the OFF position (see switch monitor below)
         self.lock = threading.Lock()
 
 
@@ -682,6 +683,131 @@ def refresh_loop():
             last_sports = now
 
         time.sleep(5)
+
+
+# ----------------------------------------------------------------------------
+# PHYSICAL SWITCH POSITION MONITOR (WebSocket)
+# ----------------------------------------------------------------------------
+# BUSY Bar's on-device switch is a real 5-position selector -- BUSY, CUSTOM,
+# OFF, APPS, SETTINGS -- not a simple on/off toggle. Confirmed via the
+# official protobuf schemas at https://github.com/busy-app/busybar-protobuf
+# (input.proto: BSB_Input.SwitchPosition, OFF = 2). Position changes stream
+# in real time over /api/status/ws as protobuf State messages.
+#
+# Rather than pull in the full generated protobuf/nanopb toolchain (which
+# needs protoc/grpc_tools and the whole schema set), this hand-rolls just
+# enough of a varint/tag walker to find one path in the message:
+# State.updates[].input.switch_event.position. See state.proto and
+# input.proto in that repo for the full message shapes.
+
+try:
+    import websocket  # websocket-client package
+    _HAVE_WEBSOCKET = True
+except ImportError:
+    _HAVE_WEBSOCKET = False
+
+WS_URL = f"ws://{BUSY_IP}/api/status/ws"
+SWITCH_OFF = 2  # BSB_Input.SwitchPosition.OFF
+
+
+def _read_varint(buf, pos):
+    result = 0
+    shift = 0
+    while True:
+        b = buf[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            break
+        shift += 7
+    return result, pos
+
+
+def _iter_protobuf_fields(buf):
+    """Yield (field_number, wire_type, value) for a flat protobuf buffer.
+    value is an int for wire_type 0 (varint) or raw bytes for wire_type 2
+    (length-delimited); fixed32/64 fields are skipped since nothing we care
+    about here uses them."""
+    pos = 0
+    n = len(buf)
+    while pos < n:
+        tag, pos = _read_varint(buf, pos)
+        field_no, wire_type = tag >> 3, tag & 0x7
+        if wire_type == 0:
+            value, pos = _read_varint(buf, pos)
+            yield field_no, wire_type, value
+        elif wire_type == 1:
+            pos += 8
+        elif wire_type == 2:
+            length, pos = _read_varint(buf, pos)
+            value = buf[pos:pos + length]
+            pos += length
+            yield field_no, wire_type, value
+        elif wire_type == 5:
+            pos += 4
+        else:
+            return  # unknown wire type -- bail rather than misparse the rest
+
+
+def _extract_switch_position(state_message_bytes):
+    """Walk a top-level BSB_State.State message looking for
+    updates[].input.switch_event.position (see input.proto/state.proto).
+    Returns a SwitchPosition int, or None if this message doesn't carry a
+    switch event at all (most messages are frames/timers/etc, not this)."""
+    for field_no, wire_type, value in _iter_protobuf_fields(state_message_bytes):
+        if field_no != 2 or wire_type != 2:       # State.updates (StateUpdate)
+            continue
+        for su_field, su_wt, su_val in _iter_protobuf_fields(value):
+            if su_field != 11 or su_wt != 2:      # StateUpdate.input (InputEvent)
+                continue
+            for ie_field, ie_wt, ie_val in _iter_protobuf_fields(su_val):
+                if ie_field != 2 or ie_wt != 2:    # InputEvent.switch_event
+                    continue
+                position = 0  # SwitchPosition default (BUSY=0) if field omitted
+                for se_field, se_wt, se_val in _iter_protobuf_fields(ie_val):
+                    if se_field == 1 and se_wt == 0:
+                        position = se_val
+                return position
+    return None
+
+
+def switch_monitor_loop():
+    """Background thread: keep a WebSocket connection to BUSY Bar's status
+    stream open and update store.switch_off whenever a switch_event arrives.
+    Reconnects on any drop. Degrades gracefully -- switch_off just stays
+    False, i.e. the dashboard behaves as if this feature doesn't exist -- if
+    websocket-client isn't installed or the device is unreachable."""
+    if not _HAVE_WEBSOCKET:
+        print("[switch_monitor] websocket-client not installed -- switch "
+              "position detection disabled (pip install websocket-client)")
+        return
+
+    def on_message(ws, message):
+        if not isinstance(message, (bytes, bytearray)):
+            return  # text frames (if any) aren't the protobuf state stream
+        try:
+            position = _extract_switch_position(message)
+        except Exception as e:
+            print(f"[switch_monitor] failed to parse a state message: {e!r}")
+            return
+        if position is not None:
+            with store.lock:
+                store.switch_off = (position == SWITCH_OFF)
+
+    def on_open(ws):
+        ws.send(json.dumps({"enable": True}))
+
+    def on_error(ws, error):
+        print(f"[switch_monitor] connection error: {error!r}")
+
+    while True:
+        try:
+            ws = websocket.WebSocketApp(WS_URL, on_open=on_open, on_message=on_message,
+                                        on_error=on_error)
+            ws.run_forever(ping_interval=30, ping_timeout=10)
+        except Exception as e:
+            print(f"[switch_monitor] connection error: {e}")
+        time.sleep(5)  # backoff before reconnecting
 
 
 # ----------------------------------------------------------------------------
@@ -868,11 +994,26 @@ def main():
             store.teams[slug + league] = status
 
     threading.Thread(target=refresh_loop, daemon=True).start()
+    threading.Thread(target=switch_monitor_loop, daemon=True).start()
 
     print("Starting segment loop. Ctrl+C to stop.")
     was_quiet = False
+    was_switch_off = False
     try:
         while True:
+            with store.lock:
+                switch_off = store.switch_off
+            if switch_off:
+                if not was_switch_off:
+                    print("[switch] OFF position detected -- pausing display")
+                    busy_clear()
+                    was_switch_off = True
+                time.sleep(5)
+                continue
+            if was_switch_off:
+                print("[switch] moved off OFF position -- resuming display")
+                was_switch_off = False
+
             if is_quiet_hours():
                 if not was_quiet:
                     print(f"[quiet hours] {QUIET_HOURS_START}-{QUIET_HOURS_END}: "
@@ -885,15 +1026,27 @@ def main():
                 print("[quiet hours] window ended, resuming display")
                 was_quiet = False
 
+            def _switch_flipped_off():
+                with store.lock:
+                    return store.switch_off
+
             run_and_wait(show_clock_segment(other_icon_files))
+            if _switch_flipped_off():
+                continue
             run_and_wait(show_weather_segment(weather_icon_files))
+            if _switch_flipped_off():
+                continue
             run_and_wait(show_moon_segment(moon_icon_files))
+            if _switch_flipped_off():
+                continue
             run_and_wait(show_tide_segment(other_icon_files))
+            if _switch_flipped_off():
+                continue
             for name, sport, league, slug in TEAMS:
                 wait_seconds = show_team_segment(name, slug, league, team_logo_files)
                 if wait_seconds is not None:
                     run_and_wait(wait_seconds)
-                if _priority_blocked:
+                if _priority_blocked or _switch_flipped_off():
                     break
     except KeyboardInterrupt:
         print("Stopped.")
