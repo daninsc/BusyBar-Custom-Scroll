@@ -156,10 +156,11 @@ def busy_upload(filename, image_bytes):
 
 
 # True while our last draw attempt was rejected because a higher-priority
-# app -- e.g. an active BUSY work-session interval timer, priority 90 vs our
-# 50 -- currently owns the display. BUSY Bar returns 409 "Not drawn due to
-# low priority" in that case rather than silently overriding, so we can
-# detect it and back off instead of fighting it every cycle.
+# app -- e.g. an active BUSY work-session interval timer (priority 90) or
+# BUSY's own ON CALL indicator (priority 50) -- currently owns the display.
+# We draw at 30, below both, so we never collide with ON CALL or a session
+# timer; BUSY Bar returns 409 "Not drawn due to low priority" if we ever do
+# lose out, and we detect it and back off instead of fighting it every cycle.
 _priority_blocked = False
 
 
@@ -195,7 +196,7 @@ def busy_draw(elements):
     the display."""
     global _priority_blocked
     url = f"{BASE_URL}/api/display/draw"
-    payload = {"application_name": APP_ID, "priority": 50, "elements": elements}
+    payload = {"application_name": APP_ID, "priority": 30, "elements": elements}
     try:
         resp = requests.post(url, json=payload, timeout=5)
         resp.raise_for_status()
@@ -711,7 +712,7 @@ SWITCH_BUSY = 0  # BSB_Input.SwitchPosition.BUSY
 SWITCH_OFF = 2   # BSB_Input.SwitchPosition.OFF
 # Positions where BUSY Bar shows its own native UI (focus/busy status, or
 # off) that our dashboard would otherwise silently draw over, since our
-# priority-50 draws aren't rejected the way an active work session's are.
+# priority-30 draws aren't rejected the way an active work session's are.
 # CUSTOM/APPS/SETTINGS are left alone -- CUSTOM in particular is the
 # position meant for exactly this kind of custom HTTP-API content.
 PAUSE_SWITCH_POSITIONS = {SWITCH_BUSY, SWITCH_OFF}
