@@ -578,7 +578,7 @@ class DataStore:
         self.tides = []
         self.teams = {}  # slug+league -> status dict
         self.ntp_offset = 0.0  # seconds to add to local time.time() to get network time
-        self.switch_off = False  # physical switch is in the OFF position (see switch monitor below)
+        self.switch_off = False  # switch is in a position with its own native UI (see PAUSE_SWITCH_POSITIONS)
         self.lock = threading.Lock()
 
 
@@ -707,7 +707,14 @@ except ImportError:
     _HAVE_WEBSOCKET = False
 
 WS_URL = f"ws://{BUSY_IP}/api/status/ws"
-SWITCH_OFF = 2  # BSB_Input.SwitchPosition.OFF
+SWITCH_BUSY = 0  # BSB_Input.SwitchPosition.BUSY
+SWITCH_OFF = 2   # BSB_Input.SwitchPosition.OFF
+# Positions where BUSY Bar shows its own native UI (focus/busy status, or
+# off) that our dashboard would otherwise silently draw over, since our
+# priority-50 draws aren't rejected the way an active work session's are.
+# CUSTOM/APPS/SETTINGS are left alone -- CUSTOM in particular is the
+# position meant for exactly this kind of custom HTTP-API content.
+PAUSE_SWITCH_POSITIONS = {SWITCH_BUSY, SWITCH_OFF}
 
 
 def _read_varint(buf, pos):
@@ -792,7 +799,7 @@ def switch_monitor_loop():
             return
         if position is not None:
             with store.lock:
-                store.switch_off = (position == SWITCH_OFF)
+                store.switch_off = (position in PAUSE_SWITCH_POSITIONS)
 
     def on_open(ws):
         ws.send(json.dumps({"enable": True}))
@@ -1044,13 +1051,13 @@ def main():
                 switch_off = store.switch_off
             if switch_off:
                 if not was_switch_off:
-                    print("[switch] OFF position detected -- pausing display")
+                    print("[switch] BUSY/OFF position detected -- pausing display")
                     busy_clear()
                     was_switch_off = True
                 time.sleep(5)
                 continue
             if was_switch_off:
-                print("[switch] moved off OFF position -- resuming display")
+                print("[switch] moved to CUSTOM/APPS/SETTINGS -- resuming display")
                 was_switch_off = False
 
             if is_quiet_hours():
