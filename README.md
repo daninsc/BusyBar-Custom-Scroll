@@ -43,8 +43,9 @@ path if you move `dashboard.py` elsewhere.
 
 ## When the dashboard pauses itself
 
-The dashboard draws at priority 50 on BUSY Bar's display API, and stays out
-of the way in three situations:
+The dashboard draws at priority 30 on BUSY Bar's display API (dropped from
+50 after we found it collided with BUSY's own ON CALL indicator, which also
+draws at 50), and stays out of the way in three situations:
 
 1. **Active BUSY/CUSTOM work session** (priority 90) -- BUSY Bar rejects our
    draws with `409 "Not drawn due to low priority"` while a session is
@@ -89,11 +90,14 @@ timestamp, useful if this needs revisiting on a firmware update.
   revisiting with the real generated protobuf bindings if more of that
   stream becomes useful later.
 
-## Related upstream issue
+## Related upstream issue (resolved)
 
 While investigating device state over the HTTP API, found that the BUSY
-desktop app's "ON CALL" mic-sensing integration detects microphone use
-correctly (confirmed in the app's own UI) but never pushes that status to
-the physical device (`/api/busy/snapshot` never updates). Unrelated to this
-dashboard, but filed for reference:
-[busybar-firmware#890](https://github.com/busy-app/busybar-firmware/issues/890).
+desktop app's "ON CALL" mic-sensing integration would sometimes never push
+its status to the physical device (`/api/busy/snapshot` never updates).
+Filed as [busybar-firmware#890](https://github.com/busy-app/busybar-firmware/issues/890)
+and root-caused with the maintainers: BUSY's `OnCallDisplayLoop` also draws
+at priority 50, the same priority this dashboard used to draw at, so the
+two apps collided and one would lose the display contest. Not a firmware
+bug -- fixed on our side by dropping this dashboard's priority to 30 (see
+above). Issue closed.
