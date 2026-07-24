@@ -50,6 +50,13 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
 
 DEFAULT_CONFIG = {
+    # BUSY Bar's IP -- 10.0.4.20 is the fixed USB virtual-LAN address. Point
+    # this at 127.0.0.1:8080 (with a port) to run against the BUSY Bar
+    # Emulator (https://github.com/maxswinkels/busybar-emulator) instead of
+    # real hardware -- handy for trying this out or hacking on it before
+    # your own bar arrives. Can also be overridden per-run without editing
+    # this file: BUSY_BAR_HOST=127.0.0.1:8080 python3 dashboard.py
+    "busy_ip": "10.0.4.20",
     "city_name": "Charleston",
     "lat": 32.7765,
     "lon": -79.9311,
@@ -91,8 +98,12 @@ def load_config():
 
 CONFIG = load_config()
 
-BUSY_IP = "10.0.4.20"  # USB virtual LAN. Wi-Fi (192.168.55.235) returned {"error":"Forbidden"}
-                        # without further authorization -- see notes below main().
+# Precedence: BUSY_BAR_HOST env var > "busy_ip" in config.json > hardcoded
+# default. The env var is meant for one-off overrides (e.g. pointing at the
+# emulator to test) without touching config.json.
+BUSY_IP = os.environ.get("BUSY_BAR_HOST") or CONFIG.get("busy_ip", "10.0.4.20")
+# Wi-Fi (192.168.55.235) returned {"error":"Forbidden"} without further
+# authorization -- see notes below main(). USB virtual LAN (10.0.4.20) works.
 BASE_URL = f"http://{BUSY_IP}"
 APP_ID = "dashboard"
 

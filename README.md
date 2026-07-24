@@ -11,6 +11,18 @@ A continuous scrolling ticker for BUSY Bar showing:
 - Season-aware sports scores/schedule: Pittsburgh Pirates, Pittsburgh Steelers,
   West Virginia Mountaineers, South Carolina Gamecocks, Clemson Tigers (via ESPN)
 
+Everything above is just the *default* config -- see
+[Configuring this for your own city/team](#configuring-this-for-your-own-cityteam)
+to point it at a different location, tide station, and set of teams without
+touching any code.
+
+![Dashboard segments, rendered from the real draw payloads the script sends](./2026-07-24-dashboard-segments-preview.png)
+
+*Illustrative renders built from the dashboard's actual draw-API payloads
+(exact text/colors/layout, real font substituted) -- not literal photos of
+the LED matrix. See [Testing without hardware](#testing-without-hardware-the-busy-bar-emulator)
+for how these were generated.*
+
 ## Setup
 
 ```
@@ -26,6 +38,51 @@ python3 dashboard.py
 City, tide station, tracked teams, and quiet hours are configured in
 `config.json` -- edit directly, no code changes needed. A default
 config.json is written automatically on first run if one doesn't exist.
+
+## Configuring this for your own city/team
+
+Fork this repo, then edit `config.json` (created automatically on first
+run if it doesn't exist yet):
+
+| Key | What it controls |
+|---|---|
+| `busy_ip` | Your BUSY Bar's IP, or `127.0.0.1:8080` to test against the [emulator](#testing-without-hardware-the-busy-bar-emulator). Can also be set per-run with `BUSY_BAR_HOST=... python3 dashboard.py` without editing the file. |
+| `city_name`, `lat`, `lon` | Weather location (Open-Meteo, no API key needed). |
+| `tide_station` | NOAA Tides & Currents station ID for your area -- find yours at [tidesandcurrents.noaa.gov](https://tidesandcurrents.noaa.gov/). |
+| `teams` | List of `[display name, ESPN sport path, ESPN league path, team slug]` rows -- swap in your own teams/leagues. |
+| `quiet_hours_start` / `quiet_hours_end` | Daily window the dashboard stays off, `"HH:MM"` 24h, wraps past midnight. |
+
+No other setup is needed -- the script reads this file on every restart,
+so changes take effect the next time it (re)launches.
+
+## Testing without hardware (the BUSY Bar Emulator)
+
+Don't have a physical bar yet, or want to try changes safely before pushing
+them to a real device? Max Swinkels built a faithful local emulator --
+same HTTP API, fonts, animations and priority/409 conflict rules as the
+real firmware, with a web UI that renders the 72x16 LED matrix in a
+browser: [busybar-emulator](https://github.com/maxswinkels/busybar-emulator)
+([announcement thread](https://www.reddit.com/r/busyapp/comments/1v3ukkc/i_built_a_local_busy_bar_emulator_so_you_can/)).
+
+```
+git clone https://github.com/maxswinkels/busybar-emulator.git
+cd busybar-emulator/web && npm install && npm run build && cd ..
+node server.js              # → http://127.0.0.1:8080
+```
+
+Then, from this repo, point the dashboard at it instead of real hardware:
+
+```
+BUSY_BAR_HOST=127.0.0.1:8080 python3 dashboard.py
+```
+
+Confirmed working end-to-end against the emulator: all five segments
+(clock/weather/moon/tide/sports) draw and upload icons with zero errors
+over the standard HTTP API. The one thing that doesn't apply is switch-position
+detection (`switch_monitor_loop`) -- the emulator doesn't implement the
+`/api/status/ws` stream, since that's real-device-only, so it just logs
+harmless connection-refused/404 messages in the background and the
+dashboard keeps drawing normally regardless.
 
 ## Running as a background service (macOS)
 
