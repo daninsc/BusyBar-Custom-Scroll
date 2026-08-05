@@ -55,6 +55,30 @@ run if it doesn't exist yet):
 No other setup is needed -- the script reads this file on every restart,
 so changes take effect the next time it (re)launches.
 
+### Browser control panel
+
+[`control-panel.html`](./control-panel.html) is a single self-contained
+HTML file -- no install, no server, no build step. Open it in any browser,
+point it at your bar's IP (or `127.0.0.1:8080` for the emulator), and it
+talks straight to the device's HTTP API via `fetch()`, the same concept as
+[BarPilot](https://github.com/nastea1/barpilot) and this project's sibling
+[Busy-Bar-Class-Apps control panel](https://github.com/daninsc/Busy-Bar-Class-Apps),
+just scoped to this dashboard instead of either of their full feature sets.
+
+A **Settings** tab edits everything `config.json` holds (city, tide
+station, teams, quiet hours, bar IP) and saves the file directly -- same
+data, no code or terminal needed. Five more tabs (**Clock**, **Weather**,
+**Moon**, **Tide**, **Sports**) let you test-draw each segment's colors
+against real hardware with sample text, independent of whatever
+`dashboard.py` is currently drawing -- handy for tuning colors without
+restarting the Python service. Settings persist in the browser's local
+storage between visits.
+
+Note: the BUSY Bar Emulator's own README shows color values as
+`0xRRGGBBAA`, but a live emulator instance (and real hardware, throughout
+this project) actually wants `#RRGGBBAA` -- confirmed by testing directly
+against the emulator. `control-panel.html` uses `#RRGGBBAA` to match.
+
 ## Testing without hardware (the BUSY Bar Emulator)
 
 Don't have a physical bar yet, or want to try changes safely before pushing

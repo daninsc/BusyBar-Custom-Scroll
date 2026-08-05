@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Control Panel — BUSY Bar</title>
+<style>
+  :root {
+    --bg: #0e1015;
+    --panel: #171a21;
+    --panel-2: #1f232c;
+    --border: #2b3040;
+    --text: #e8eaf0;
+    --muted: #8a90a3;
+    --accent: #2b7fff;
+    --accent-2: #ffb000;
+    --danger: #ff3c3c;
+    --ok: #3ccb7f;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+  }
+  aside {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 20px 12px;
+  }
+  aside h1 { font-size: 15px; margin: 0 8px 4px; color: var(--text); }
+  aside p.sub { font-size: 12px; color: var(--muted); margin: 0 8px 20px; }
+  nav button {
+    display: block; width: 100%; text-align: left; background: none; border: none;
+    color: var(--muted); padding: 10px 12px; border-radius: var(--radius);
+    font-size: 14px; cursor: pointer; margin-bottom: 4px;
+  }
+  nav button:hover { background: var(--panel-2); color: var(--text); }
+  nav button.active { background: var(--accent); color: #fff; font-weight: 600; }
+
+  main { flex: 1; padding: 28px 36px; max-width: 780px; }
+
+  .device-bar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 14px; margin-bottom: 24px;
+  }
+  .device-bar label { font-size: 12px; color: var(--muted); }
+  .device-bar input {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  #host { width: 150px; }
+  #token { width: 140px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
+  .status-dot.ok { background: var(--ok); }
+  .status-dot.bad { background: var(--danger); }
+  #conn-check { margin-left: auto; }
+
+  section.panel { display: none; }
+  section.panel.active { display: block; }
+
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  p.desc { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+
+  .field { margin-bottom: 16px; }
+  .field label {
+    display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px;
+    text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .field input[type=text], .field input[type=number], .field select {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 14px;
+  }
+  .row { display: flex; gap: 12px; }
+  .row .field { flex: 1; }
+
+  table.teams { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  table.teams th { text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; padding: 4px 6px; }
+  table.teams td { padding: 4px 6px; }
+  table.teams input { width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  .row-actions button { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 16px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--accent);
+    color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
+  .btn.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+  .btn.danger { background: var(--danger); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+
+  .preview {
+    background: #000; border: 2px solid var(--border); border-radius: 4px; width: 100%;
+    max-width: 432px; aspect-ratio: 72 / 16; margin: 4px 0 20px; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    font-family: "DejaVu Sans Mono", monospace; font-weight: bold; letter-spacing: 1px;
+    line-height: 1.3; overflow: hidden;
+  }
+  .preview span { display: block; white-space: pre; }
+
+  .log {
+    font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; max-height: 120px; overflow-y: auto; margin-top: 16px;
+    white-space: pre-wrap;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  input[type=color] {
+    -webkit-appearance: none; appearance: none; width: 40px; height: 32px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2);
+    padding: 2px; cursor: pointer;
+  }
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type=color]::-webkit-color-swatch { border: none; border-radius: 4px; }
+  .color-field { display: flex; align-items: center; gap: 10px; }
+  .color-field label { margin: 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+</style>
+</head>
+<body>
+
+<aside>
+  <h1>Dashboard</h1>
+  <p class="sub">BUSY Bar control panel</p>
+  <nav>
+    <button class="nav-btn active" data-panel="settings">Settings</button>
+    <button class="nav-btn" data-panel="clock">Clock</button>
+    <button class="nav-btn" data-panel="weather">Weather</button>
+    <button class="nav-btn" data-panel="moon">Moon</button>
+    <button class="nav-btn" data-panel="tide">Tide</button>
+    <button class="nav-btn" data-panel="sports">Sports</button>
+  </nav>
+</aside>
+
+<main>
+  <div class="device-bar">
+    <label for="host">Device</label>
+    <input id="host" type="text" value="127.0.0.1:8080" spellcheck="false">
+    <label for="token">API token</label>
+    <input id="token" type="text" placeholder="optional" spellcheck="false">
+    <button id="conn-check" class="btn secondary"><span class="status-dot" id="conn-dot"></span>Check</button>
+  </div>
+
+  <!-- SETTINGS (== config.json) -->
+  <section class="panel active" id="panel-settings">
+    <h2>Settings</h2>
+    <p class="desc">
+      Everything here maps directly to <code>config.json</code>, which
+      <code>dashboard.py</code> reads on startup. Save writes the file --
+      restart the Python service afterward to pick up changes.
+    </p>
+    <div class="row">
+      <div class="field"><label for="s-city">City name</label><input id="s-city" type="text" value="Charleston"></div>
+      <div class="field"><label for="s-station">NOAA tide station</label><input id="s-station" type="text" value="8665530"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="s-lat">Latitude</label><input id="s-lat" type="number" step="0.0001" value="32.7765"></div>
+      <div class="field"><label for="s-lon">Longitude</label><input id="s-lon" type="number" step="0.0001" value="-79.9311"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label for="s-quiet-start">Quiet hours start (24h)</label><input id="s-quiet-start" type="text" value="22:00"></div>
+      <div class="field"><label for="s-quiet-end">Quiet hours end (24h)</label><input id="s-quiet-end" type="text" value="08:00"></div>
+    </div>
+    <div class="field">
+      <label>Teams</label>
+      <table class="teams" id="teams-table">
+        <thead><tr><th>Display name</th><th>Sport</th><th>League</th><th>Slug</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button class="btn secondary" id="add-team">+ Add team</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="save-config">Save config.json</button>
+      <label class="btn secondary" for="load-config" style="cursor:pointer">Load existing config.json…</label>
+      <input type="file" id="load-config" accept="application/json" style="display:none">
+    </div>
+    <p class="hint">Uses your browser's native save dialog where supported (Chrome/Edge); falls back to a normal download elsewhere -- move the file next to <code>dashboard.py</code> if it lands in Downloads.</p>
+  </section>
+
+  <!-- CLOCK -->
+  <section class="panel" id="panel-clock">
+    <h2>Clock</h2>
+    <p class="desc">Test-draw the clock segment's colors on real hardware before editing <code>dashboard.py</code>.</p>
+    <div class="preview" id="preview-clock">
+      <span id="pv-ck-title">07-24-2026</span>
+      <span id="pv-ck-content" style="color:#90EE90">10:07 AM</span>
+    </div>
+    <div class="row">
+      <div class="field color-field"><label for="ck-title-color">Date color</label><input id="ck-title-color" type="color" value="#aaaaaa"></div>
+      <div class="field color-field"><label for="ck-content-color">Time color</label><input id="ck-content-color" type="color" value="#90ee90"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn" data-send="clock">Send test to BUSY Bar</button>
+      <button class="btn secondary" data-clear="dashboard">Clear</button>
+    </div>
+  </section>
+
+  <!-- WEATHER -->
+  <section class="panel" id="panel-weather">
+    <h2>Weather</h2>
+    <p class="desc">Test-draw with sample text -- live data still comes from <code>dashboard.py</code>, not this panel.</p>
+    <div class="preview" id="preview-weather">
+      <span id="pv-wx-info" style="color:#ffd700">Charleston 88°F (H:90° L:80°)</span>
+    </div>
+    <div class="field color-field"><label for="wx-color">Text color</label><input id="wx-color" type="color" value="#ffd700"></div>
+    <div class="btn-row">
+      <button class="btn" data-send="weather">Send test to BUSY Bar</button>
+      <button class="btn secondary" data-clear="dashboard">Clear</button>
+    </div>
+  </section>
+
+  <!-- MOON -->
+  <section class="panel" id="panel-moon">
+    <h2>Moon</h2>
+    <p class="desc">Test-draw a moon-phase label with sample text.</p>
+    <div class="preview" id="preview-moon">
+      <span id="pv-mn-label">Waxing Gibbous</span>
+    </div>
+    <div class="field color-field"><label for="mn-color">Text color</label><input id="mn-color" type="color" value="#ffffff"></div>
+    <div class="btn-row">
+      <button class="btn" data-send="moon">Send test to BUSY Bar</button>
+      <button class="btn secondary" data-clear="dashboard">Clear</button>
+    </div>
+  </section>
+
+  <!-- TIDE -->
+  <section class="panel" id="panel-tide">
+    <h2>Tide</h2>
+    <p class="desc">Test-draw a tide readout with sample text.</p>
+    <div class="preview" id="preview-tide">
+      <span id="pv-td-info" style="color:#2b7fff">LOW 0.6ft @ 10:36 AM</span>
+    </div>
+    <div class="field color-field"><label for="td-color">Text color</label><input id="td-color" type="color" value="#2b7fff"></div>
+    <div class="btn-row">
+      <button class="btn" data-send="tide">Send test to BUSY Bar</button>
+      <button class="btn secondary" data-clear="dashboard">Clear</button>
+    </div>
+  </section>
+
+  <!-- SPORTS -->
+  <section class="panel" id="panel-sports">
+    <h2>Sports</h2>
+    <p class="desc">Test-draw a sample team status line.</p>
+    <div class="preview" id="preview-sports">
+      <span id="pv-sp-info" style="color:#ffb000">Pirates NEXT Sat 7:05 PM</span>
+    </div>
+    <div class="field color-field"><label for="sp-color">Text color</label><input id="sp-color" type="color" value="#ffb000"></div>
+    <div class="field"><label for="sp-text">Sample text</label><input id="sp-text" type="text" value="Pirates NEXT Sat 7:05 PM"></div>
+    <div class="btn-row">
+      <button class="btn" data-send="sports">Send test to BUSY Bar</button>
+      <button class="btn secondary" data-clear="dashboard">Clear</button>
+    </div>
+  </section>
+
+  <div class="log" id="log">Ready. Set a device host above and hit Check, or just try Send -- errors show up here.</div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- storage ----------
+  const store = {
+    get(k, d) { try { return JSON.parse(localStorage.getItem("bbdash:" + k)) ?? d; } catch { return d; } },
+    set(k, v) { localStorage.setItem("bbdash:" + k, JSON.stringify(v)); },
+  };
+
+  const hostInput = document.getElementById("host");
+  const tokenInput = document.getElementById("token");
+  hostInput.value = store.get("host", "127.0.0.1:8080");
+  tokenInput.value = store.get("token", "");
+  hostInput.addEventListener("change", () => store.set("host", hostInput.value.trim()));
+  tokenInput.addEventListener("change", () => store.set("token", tokenInput.value.trim()));
+
+  const log = document.getElementById("log");
+  function logMsg(msg, isError) {
+    const time = new Date().toLocaleTimeString();
+    log.textContent = `[${time}] ${msg}\n` + log.textContent;
+    log.style.color = isError ? "#ff8080" : "";
+  }
+
+  // ---------- BUSY Bar HTTP API -- self-contained, fetch() only ----------
+  async function api(method, path, body) {
+    const host = hostInput.value.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+    const url = `http://${host}${path}`;
+    const headers = {};
+    const token = tokenInput.value.trim();
+    if (token) headers["X-API-Token"] = token;
+    let opts = { method, headers };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, opts);
+    let data = null;
+    try { data = await res.json(); } catch { /* no body */ }
+    if (!res.ok) {
+      const errMsg = (data && data.error) || res.statusText;
+      throw new Error(`${method} ${path} → ${res.status} ${errMsg}`);
+    }
+    return data;
+  }
+
+  function draw(applicationName, elements, priority) {
+    const body = { application_name: applicationName, elements };
+    if (priority !== undefined) body.priority = priority;
+    return api("POST", "/api/display/draw", body);
+  }
+
+  function clearApp(applicationName) {
+    return api("DELETE", `/api/display/draw?application_name=${encodeURIComponent(applicationName)}`);
+  }
+
+  // #RRGGBBAA color helper (alpha always opaque). NOTE: the emulator's own
+  // README shows a "0xRRGGBBAA" example, but a live emulator instance
+  // (tested here) rejects that with "color must be #RRGGBBAA" -- and
+  // #RRGGBBAA is exactly what dashboard.py has sent successfully against
+  // real hardware and the emulator throughout this project. Use #, not 0x.
+  function hexToBusyColor(hex) {
+    return "#" + hex.replace("#", "").toUpperCase() + "FF";
+  }
+
+  document.getElementById("conn-check").addEventListener("click", async () => {
+    const dot = document.getElementById("conn-dot");
+    try {
+      const v = await api("GET", "/api/version");
+      dot.className = "status-dot ok";
+      logMsg(`Connected — api_semver ${v.api_semver || "?"}`);
+    } catch (e) {
+      dot.className = "status-dot bad";
+      logMsg(e.message, true);
+    }
+  });
+
+  async function sendAndReport(fn, label) {
+    try {
+      await fn();
+      logMsg(`${label} sent.`);
+    } catch (e) {
+      logMsg(e.message, true);
+    }
+  }
+
+  document.querySelectorAll("[data-clear]").forEach((btn) => {
+    btn.addEventListener("click", () => sendAndReport(() => clearApp(btn.dataset.clear), `Cleared ${btn.dataset.clear}`));
+  });
+
+  // ---------- nav ----------
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("panel-" + btn.dataset.panel).classList.add("active");
+    });
+  });
+
+  // ---------- Settings (config.json) ----------
+  const sCity = document.getElementById("s-city");
+  const sStation = document.getElementById("s-station");
+  const sLat = document.getElementById("s-lat");
+  const sLon = document.getElementById("s-lon");
+  const sQuietStart = document.getElementById("s-quiet-start");
+  const sQuietEnd = document.getElementById("s-quiet-end");
+  const teamsBody = document.querySelector("#teams-table tbody");
+
+  const DEFAULT_TEAMS = [
+    ["Pirates", "baseball", "mlb", "pit"],
+    ["Steelers", "football", "nfl", "pit"],
+    ["WVU", "football", "college-football", "wvu"],
+    ["S Carolina", "football", "college-football", "sc"],
+    ["Clemson", "football", "college-football", "clemson"],
+  ];
+
+  function teamRow(name, sport, league, slug) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="text" class="t-name" value="${name}"></td>
+      <td><input type="text" class="t-sport" value="${sport}"></td>
+      <td><input type="text" class="t-league" value="${league}"></td>
+      <td><input type="text" class="t-slug" value="${slug}"></td>
+      <td class="row-actions"><button type="button" title="Remove">✕</button></td>`;
+    tr.querySelector("button").addEventListener("click", () => tr.remove());
+    return tr;
+  }
+
+  function renderTeams(teams) {
+    teamsBody.innerHTML = "";
+    teams.forEach(([n, sp, lg, sl]) => teamsBody.appendChild(teamRow(n, sp, lg, sl)));
+  }
+  renderTeams(store.get("teams", DEFAULT_TEAMS));
+
+  document.getElementById("add-team").addEventListener("click", () => {
+    teamsBody.appendChild(teamRow("", "", "", ""));
+  });
+
+  function readTeams() {
+    return Array.from(teamsBody.querySelectorAll("tr")).map((tr) => [
+      tr.querySelector(".t-name").value.trim(),
+      tr.querySelector(".t-sport").value.trim(),
+      tr.querySelector(".t-league").value.trim(),
+      tr.querySelector(".t-slug").value.trim(),
+    ]).filter((t) => t[0]);
+  }
+
+  [sCity, sStation, sLat, sLon, sQuietStart, sQuietEnd].forEach((el) => {
+    const key = "s-" + el.id.slice(2);
+    el.value = store.get(key, el.value);
+    el.addEventListener("change", () => store.set(key, el.value));
+  });
+
+  function buildConfig() {
+    return {
+      busy_ip: hostInput.value.trim() || "10.0.4.20",
+      city_name: sCity.value.trim() || "Charleston",
+      lat: parseFloat(sLat.value) || 0,
+      lon: parseFloat(sLon.value) || 0,
+      tide_station: sStation.value.trim() || "8665530",
+      quiet_hours_start: sQuietStart.value.trim() || "22:00",
+      quiet_hours_end: sQuietEnd.value.trim() || "08:00",
+      teams: readTeams(),
+    };
+  }
+
+  document.getElementById("save-config").addEventListener("click", async () => {
+    store.set("teams", readTeams());
+    const json = JSON.stringify(buildConfig(), null, 2) + "\n";
+
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: "config.json",
+          types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(json);
+        await writable.close();
+        logMsg("Saved config.json.");
+        return;
+      } catch (e) {
+        if (e.name === "AbortError") return;
+      }
+    }
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "config.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    logMsg("Downloaded config.json -- move it next to dashboard.py.");
+  });
+
+  document.getElementById("load-config").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const cfg = JSON.parse(reader.result);
+        if (cfg.busy_ip) hostInput.value = cfg.busy_ip;
+        sCity.value = cfg.city_name ?? "";
+        sLat.value = cfg.lat ?? "";
+        sLon.value = cfg.lon ?? "";
+        sStation.value = cfg.tide_station ?? "";
+        sQuietStart.value = cfg.quiet_hours_start ?? "22:00";
+        sQuietEnd.value = cfg.quiet_hours_end ?? "08:00";
+        renderTeams(Array.isArray(cfg.teams) ? cfg.teams : []);
+        logMsg(`Loaded ${file.name}.`);
+      } catch (e) {
+        logMsg("Couldn't parse that file as JSON: " + e.message, true);
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  });
+
+  // ---------- Clock test ----------
+  const ckTitleColor = document.getElementById("ck-title-color");
+  const ckContentColor = document.getElementById("ck-content-color");
+  ckTitleColor.value = store.get("ck-title-color", "#aaaaaa");
+  ckContentColor.value = store.get("ck-content-color", "#90ee90");
+  function renderClockPreview() {
+    document.getElementById("pv-ck-title").style.color = ckTitleColor.value;
+    document.getElementById("pv-ck-content").style.color = ckContentColor.value;
+  }
+  [ckTitleColor, ckContentColor].forEach((el) => el.addEventListener("input", () => {
+    store.set(el.id, el.value);
+    renderClockPreview();
+  }));
+  renderClockPreview();
+  document.querySelector('[data-send="clock"]').addEventListener("click", () => {
+    const now = new Date();
+    const elements = [
+      { id: "title", type: "text", text: now.toLocaleDateString("en-US"), x: 18, y: 0, font: "small", align: "top_left", color: hexToBusyColor(ckTitleColor.value) },
+      { id: "content", type: "text", text: now.toLocaleTimeString("en-US"), x: 18, y: 8, font: "small", align: "top_left", color: hexToBusyColor(ckContentColor.value) },
+    ];
+    sendAndReport(() => draw("dashboard", elements), "Clock test");
+  });
+
+  // ---------- Weather test ----------
+  const wxColor = document.getElementById("wx-color");
+  wxColor.value = store.get("wx-color", "#ffd700");
+  wxColor.addEventListener("input", () => {
+    store.set("wx-color", wxColor.value);
+    document.getElementById("pv-wx-info").style.color = wxColor.value;
+  });
+  document.querySelector('[data-send="weather"]').addEventListener("click", () => {
+    const elements = [
+      { id: "info", type: "text", text: document.getElementById("pv-wx-info").textContent, x: 18, y: 5, font: "normal", align: "top_left", color: hexToBusyColor(wxColor.value) },
+    ];
+    sendAndReport(() => draw("dashboard", elements), "Weather test");
+  });
+
+  // ---------- Moon test ----------
+  const mnColor = document.getElementById("mn-color");
+  mnColor.value = store.get("mn-color", "#ffffff");
+  mnColor.addEventListener("input", () => {
+    store.set("mn-color", mnColor.value);
+    document.getElementById("pv-mn-label").style.color = mnColor.value;
+  });
+  document.querySelector('[data-send="moon"]').addEventListener("click", () => {
+    const elements = [
+      { id: "content", type: "text", text: document.getElementById("pv-mn-label").textContent, x: 18, y: 4, font: "normal", align: "top_left", color: hexToBusyColor(mnColor.value) },
+    ];
+    sendAndReport(() => draw("dashboard", elements), "Moon test");
+  });
+
+  // ---------- Tide test ----------
+  const tdColor = document.getElementById("td-color");
+  tdColor.value = store.get("td-color", "#2b7fff");
+  tdColor.addEventListener("input", () => {
+    store.set("td-color", tdColor.value);
+    document.getElementById("pv-td-info").style.color = tdColor.value;
+  });
+  document.querySelector('[data-send="tide"]').addEventListener("click", () => {
+    const elements = [
+      { id: "content", type: "text", text: document.getElementById("pv-td-info").textContent, x: 18, y: 5, font: "normal", align: "top_left", color: hexToBusyColor(tdColor.value) },
+    ];
+    sendAndReport(() => draw("dashboard", elements), "Tide test");
+  });
+
+  // ---------- Sports test ----------
+  const spColor = document.getElementById("sp-color");
+  const spText = document.getElementById("sp-text");
+  spColor.value = store.get("sp-color", "#ffb000");
+  spText.value = store.get("sp-text", "Pirates NEXT Sat 7:05 PM");
+  function renderSportsPreview() {
+    const el = document.getElementById("pv-sp-info");
+    el.textContent = spText.value;
+    el.style.color = spColor.value;
+  }
+  [spColor, spText].forEach((el) => el.addEventListener("input", () => {
+    store.set(el.id.replace("sp-", "sp-"), el.value);
+    renderSportsPreview();
+  }));
+  renderSportsPreview();
+  document.querySelector('[data-send="sports"]').addEventListener("click", () => {
+    const elements = [
+      { id: "content", type: "text", text: spText.value, x: 18, y: 4, font: "normal", align: "top_left", color: hexToBusyColor(spColor.value) },
+    ];
+    sendAndReport(() => draw("dashboard", elements), "Sports test");
+  });
+})();
+</script>
+</body>
+</html>
