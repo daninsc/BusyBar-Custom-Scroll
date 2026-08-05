@@ -150,6 +150,23 @@ draws at 50), and stays out of the way in three situations:
 the status WebSocket -- logs every message from `/api/status/ws` with a
 timestamp, useful if this needs revisiting on a firmware update.
 
+## tide-clock/ -- standalone gallery submission
+
+[`tide-clock/`](./tide-clock) is a separate, much smaller app: a single
+stdlib-only `app.py` that alternates between a big clock and the next
+high/low tide for any NOAA station, built to match the submission format
+of the community [BUSY Bar Apps gallery](https://maxswinkels.github.io/busybar-apps/)
+(single-file, `manifest.yaml`, 720x160 preview). Unlike the full dashboard
+above, it has no `config.json` and no switch/quiet-hours logic -- just
+`--host` and `--station` flags, so it stands alone.
+
+```
+python3 tide-clock/app.py --host 127.0.0.1:8080       # emulator
+python3 tide-clock/app.py --station 8518750            # a different NOAA station
+```
+
+Submitted upstream: [maxswinkels/busybar-apps#13](https://github.com/maxswinkels/busybar-apps/pull/13).
+
 ## Known limitations
 
 - Tested against BUSY Bar's documented HTTP API (`/openapi.yaml` on-device);
